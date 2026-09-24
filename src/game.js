@@ -7,8 +7,7 @@ import { EnemySystem } from './enemies/enemies.js';
 import { HoldCamera, smoothAngle } from './motion.js';
 
 const canvas = document.querySelector('#world');
-const status = document.querySelector('#status');
-const coords = document.querySelector('#coords');
+const enemyStats = document.querySelector('#enemy-stats');
 let renderer;
 try {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -28,11 +27,15 @@ scene.fog = new THREE.Fog('#101f26', 48, 95);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 140);
 const focus = new THREE.Vector3(0, 0, 0);
 let zoom = 0.8;
+let cameraDirty = true;
 const cameraHold=new HoldCamera();
+const cameraOffset = new THREE.Vector3(24, 31, 24);
 function updateCamera() {
-  camera.position.copy(focus).add(new THREE.Vector3(24, 31, 24).multiplyScalar(zoom));
+  if (!cameraDirty) return;
+  camera.position.copy(focus).addScaledVector(cameraOffset, zoom);
   camera.lookAt(focus);
   camera.updateMatrixWorld();
+  cameraDirty = false;
 }
 scene.add(new THREE.HemisphereLight(0xcceeff, 0x293923, 2.1));
 const sun = new THREE.DirectionalLight(0xffe5b5, 3.3);
@@ -48,7 +51,9 @@ function mat(color, metalness = 0, roughness = 0.8) {
 }
 function mesh(geo, material, x, y, z, parent = scene) {
   const m = new THREE.Mesh(geo, material); m.position.set(x, y, z);
-  m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
+  // Static scenery does not cast a dynamic shadow. Characters and enemies opt in
+  // explicitly, which keeps the shadow pass small as the scene grows.
+  m.castShadow = false; m.receiveShadow = true; parent.add(m); return m;
 }
 function box(w, h, d, color, x, y, z, parent) {
   return mesh(new THREE.BoxGeometry(w, h, d), mat(color), x, y, z, parent);
@@ -124,7 +129,7 @@ const ground=new THREE.Plane(new THREE.Vector3(0,1,0),0);
 const target=hero.position.clone();
 const pointer=new THREE.Vector2(); const hit=new THREE.Vector3();
 const speed=5.5;
-let moving=false, walk=0, blend=0, markerAge=10;
+let moving=false, walk=0, blend=0, markerAge=10, resumeMovement=false;
 const enemySystem=new EnemySystem(scene,hero);
 const enemies=enemySystem.enemies;
 let desiredYaw=hero.rotation.y;
@@ -142,9 +147,12 @@ let aimScreen=null,selectedSpell=null,messageLife=0;
 const spellMessage=document.querySelector('#spell-message');
 const spellButtons=Object.fromEntries(Object.keys(SPELLS).map(key=>[key,document.querySelector('#spell-'+key)]));
 const cooldownLabels=Object.fromEntries(Object.keys(SPELLS).map(key=>[key,document.querySelector('#cooldown-'+key)]));
+const lastCooldownText=Object.fromEntries(Object.keys(SPELLS).map(key=>[key,'']));
+const lastPressed=Object.fromEntries(Object.keys(SPELLS).map(key=>[key,false]));
 const aimRing=ring(SPELLS.E.range,0.055,'#69d9ff');aimRing.visible=false;
 const aimDot=ring(0.55,0.09,'#ffe49c');aimDot.visible=false;
-function message(text){spellMessage.textContent=text;messageLife=2.5;}
+let lastEnemyStats='';
+function message(text){spellMessage.textContent=text;spellMessage.style.opacity='1';messageLife=2.5;}
 function updateAim(event){
   if(event)aimScreen={x:event.clientX,y:event.clientY};
   if(!aimScreen)return;
@@ -158,7 +166,14 @@ function castSpell(key){
   if(!spells.cast(key,aim)){
     message(spells.busy?'시전 중입니다':`${key} 재사용까지 ${spells.cooldown(key).toFixed(1)}초`);return;
   }
-  attacks.cancelWindup();stopMovement();selectedSpell=null;
+  // Preserve a normal right-click destination. The cast locks the body briefly;
+  // once the lock ends the same destination is resumed automatically.
+  resumeMovement = moving && !attacks.target && target.distanceToSquared(hero.position) > 0.025 ** 2;
+  attacks.cancelWindup();
+  moving=false;
+  targetMarker.visible=false;
+  selectedSpell=null;
+  if(key==='E'){focus.copy(hero.position);cameraDirty=true;updateCamera();}
   message(`${key} · ${SPELLS[key].name}`);
 }
 for(const [key,button] of Object.entries(spellButtons))button.addEventListener('click',()=>{
@@ -181,18 +196,19 @@ function command(event) {
     if(enemy||event.shiftKey){stopMovement();message(enemy?'자동 공격 · 사거리 밖이면 추적':'공격 대기 · 지정 위치 가까운 적 탐색');return;}
   }
   attacks.cancel();
+  resumeMovement=false;
   target.set(THREE.MathUtils.clamp(aim.x,-18.5,18.5),0,THREE.MathUtils.clamp(aim.z,-18.5,18.5));
   targetMarker.position.copy(target);targetMarker.visible=true;markerAge=0;moving=true;
 }
 canvas.addEventListener('pointerdown',command);
 canvas.addEventListener('contextmenu',event=>event.preventDefault());
-canvas.addEventListener('wheel',event=>{event.preventDefault();zoom=THREE.MathUtils.clamp(zoom+event.deltaY*0.0004,0.6,1.4);updateCamera();},{passive:false});
-function stopMovement(){moving=false;target.copy(hero.position);targetMarker.visible=false;}
+canvas.addEventListener('wheel',event=>{event.preventDefault();zoom=THREE.MathUtils.clamp(zoom+event.deltaY*0.0004,0.6,1.4);cameraDirty=true;updateCamera();},{passive:false});
+function stopMovement(){moving=false;target.copy(hero.position);targetMarker.visible=false;resumeMovement=false;}
 function stop(){stopMovement();attacks.cancel();}
 function reset(){
   hero.position.set(-5,0,5);stop();attacks.reset();spells.reset();enemySystem.reset();
   focus.set(0,0,0);zoom=0.8;cameraHold.release();selectedSpell=null;aimScreen=null;
-  aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');updateCamera();
+  aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');cameraDirty=true;updateCamera();
 }
 document.querySelector('#reset').addEventListener('click',reset);
 window.addEventListener('keydown',event=>{
@@ -208,7 +224,7 @@ window.addEventListener('keydown',event=>{
 window.addEventListener('keyup',event=>{if(event.code==='Space'){event.preventDefault();cameraHold.release();}});
 window.addEventListener('blur',()=>cameraHold.release());
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cameraHold.release();});
-function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();updateCamera();}
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();cameraDirty=true;updateCamera();}
 window.addEventListener('resize',resize);resize();
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();document.querySelector('#error').hidden=false;});
 const clock=new THREE.Clock();
@@ -228,15 +244,24 @@ function frame(){
     else stopMovement();
   }
   if(spells.busy||attacks.winding)moving=false;
+  if(!spells.busy&&!attacks.winding&&!attackTarget&&resumeMovement){
+    const remaining=target.distanceToSquared(hero.position);
+    if(remaining>0.025 ** 2){
+      moving=true;targetMarker.position.copy(target);targetMarker.visible=true;markerAge=0;
+    }
+    resumeMovement=false;
+  }
   attackSelection.visible=isAlive(attackTarget);
   if(attackSelection.visible){attackSelection.position.copy(attackTarget.position);attackSelection.position.y=0.1;}
   updateAim();
-  if(messageLife>0){messageLife-=dt;if(messageLife<=0)spellMessage.textContent=selectedSpell?`${selectedSpell} · 바닥을 클릭해 시전`:'우클릭: 적 공격 · Shift+우클릭: 바닥 기준 자동 공격';}
+  if(messageLife>0){messageLife-=dt;if(messageLife<=0){spellMessage.textContent=selectedSpell?`${selectedSpell} · 바닥을 클릭해 시전`:'우클릭: 적 공격 · Shift+우클릭: 바닥 기준 자동 공격';spellMessage.style.opacity='0';}}
   for(const key of Object.keys(SPELLS)){
     const cd=spells.cooldown(key),button=spellButtons[key];
-    cooldownLabels[key].textContent=cd>1e-8?Math.max(0.1,cd).toFixed(1)+'초':'준비';
-    button.disabled=cd>1e-8||spells.busy;
-    button.setAttribute('aria-pressed',String(selectedSpell===key));
+    const cooldownText=cd>1e-8?Math.max(0.1,cd).toFixed(1)+'초':'준비';
+    if(lastCooldownText[key]!==cooldownText){cooldownLabels[key].textContent=cooldownText;lastCooldownText[key]=cooldownText;}
+    const pressed=selectedSpell===key;
+    if(lastPressed[key]!==pressed){button.setAttribute('aria-pressed',String(pressed));lastPressed[key]=pressed;}
+    const disabled=cd>1e-8||spells.busy;if(button.disabled!==disabled)button.disabled=disabled;
   }
   aimRing.visible=selectedSpell==='E';aimRing.position.copy(hero.position);aimRing.position.y=0.1;
   aimDot.visible=selectedSpell!==null;
@@ -258,15 +283,12 @@ function frame(){
   markerAge+=dt;targetRing.scale.setScalar(1+0.15*Math.sin(markerAge*10));
   if(markerAge>1.2&&!moving)targetMarker.visible=false;
   crystals.forEach((c,i)=>{c.rotation.y=t*0.45+i;c.position.y=3.2+Math.sin(t*1.5+i)*0.12;});
-  status.textContent=spells.casting?`${spells.casting} 시전 중`:moving?'이동 중':attackTarget?'자동 공격':'대기 중';
-  document.querySelector('#enemy-stats').textContent=`적 ${enemies.filter(isAlive).length} · 처치 ${enemySystem.kills}`;
-  coords.textContent=`X ${hero.position.x.toFixed(1)} · Z ${hero.position.z.toFixed(1)}`;
-  cameraHold.update(focus,hero.position,dt);updateCamera();
+  let livingEnemies=0;for(const enemy of enemies)if(isAlive(enemy))livingEnemies++;
+  const nextEnemyStats=`적 ${livingEnemies} · 처치 ${enemySystem.kills}`;
+  if(nextEnemyStats!==lastEnemyStats){enemyStats.textContent=nextEnemyStats;lastEnemyStats=nextEnemyStats;}
+  if(cameraHold.update(focus,hero.position,dt))cameraDirty=true;
+  updateCamera();
   renderer.render(scene,camera);
-  const p=hero.position.clone();p.y=3.2;p.project(camera);
-  const health=document.querySelector('#hero-label');
-  health.style.transform=`translate(${(p.x*0.5+0.5)*innerWidth}px,${(-p.y*0.5+0.5)*innerHeight}px) translate(-50%,-100%)`;
-  health.hidden=p.z>1||p.x<-1||p.x>1||p.y<-1||p.y>1;
 }
 document.querySelector('#loading').hidden=true;
 frame();
