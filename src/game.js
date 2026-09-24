@@ -1,5 +1,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { createEzreal } from './characters/ezreal.js';
+import { SPELLS, SpellSystem } from './combat/spells.js';
+import { SpellEffects } from './combat/spell-effects.js';
 
 const canvas = document.querySelector('#world');
 const status = document.querySelector('#status');
@@ -112,23 +114,63 @@ const target=hero.position.clone();
 const pointer=new THREE.Vector2(); const hit=new THREE.Vector3();
 const speed=5.5;
 let moving=false, walk=0, blend=0, markerAge=10;
+// The next feature can register enemy objects here; no enemies spawn in this version.
+const enemies=[];
+const effects=new SpellEffects(scene,hero);
+const spells=new SpellSystem({hero,getEnemies:()=>enemies,onEvent:event=>effects.handle(event)});
+const aim=hero.position.clone().add(new THREE.Vector3(0,0,15));
+let aimScreen=null,selectedSpell=null,messageLife=0;
+const spellMessage=document.querySelector('#spell-message');
+const spellButtons=Object.fromEntries(Object.keys(SPELLS).map(key=>[key,document.querySelector('#spell-'+key)]));
+const cooldownLabels=Object.fromEntries(Object.keys(SPELLS).map(key=>[key,document.querySelector('#cooldown-'+key)]));
+const aimRing=ring(SPELLS.E.range,0.055,'#69d9ff');aimRing.visible=false;
+const aimDot=ring(0.55,0.09,'#ffe49c');aimDot.visible=false;
+function message(text){spellMessage.textContent=text;messageLife=2.5;}
+function updateAim(event){
+  if(event)aimScreen={x:event.clientX,y:event.clientY};
+  if(!aimScreen)return;
+  const r=canvas.getBoundingClientRect();
+  pointer.set((aimScreen.x-r.left)/r.width*2-1,-(aimScreen.y-r.top)/r.height*2+1);
+  raycaster.setFromCamera(pointer,camera);
+  if(raycaster.ray.intersectPlane(ground,hit))aim.set(hit.x,0,hit.z);
+}
+function castSpell(key){
+  updateAim();
+  if(!spells.cast(key,aim)){
+    message(spells.busy?'시전 중입니다':`${key} 재사용까지 ${spells.cooldown(key).toFixed(1)}초`);return;
+  }
+  stop();selectedSpell=null;
+  if(key==='E'){focus.copy(hero.position);updateCamera();}
+  message(`${key} · ${SPELLS[key].name}`);
+}
+for(const [key,button] of Object.entries(spellButtons))button.addEventListener('click',()=>{
+  if(spells.busy||spells.cooldown(key)>0)return;
+  selectedSpell=selectedSpell===key?null:key;
+  message(selectedSpell?`${key} · 바닥을 클릭하거나 터치해 조준`:'스킬 선택 취소');
+});
+canvas.addEventListener('pointermove',event=>updateAim(event));
 function command(event) {
   if(event.button!==0&&event.button!==2) return;
   event.preventDefault();canvas.focus({preventScroll:true});
-  const r=canvas.getBoundingClientRect();
-  pointer.set((event.clientX-r.left)/r.width*2-1,-(event.clientY-r.top)/r.height*2+1);
-  raycaster.setFromCamera(pointer,camera);
-  if(!raycaster.ray.intersectPlane(ground,hit)) return;
-  target.set(THREE.MathUtils.clamp(hit.x,-18.5,18.5),0,THREE.MathUtils.clamp(hit.z,-18.5,18.5));
+  updateAim(event);
+  if(event.button===0&&selectedSpell){castSpell(selectedSpell);return;}
+  selectedSpell=null;
+  if(spells.busy)return;
+  target.set(THREE.MathUtils.clamp(aim.x,-18.5,18.5),0,THREE.MathUtils.clamp(aim.z,-18.5,18.5));
   targetMarker.position.copy(target);targetMarker.visible=true;markerAge=0;moving=true;
 }
 canvas.addEventListener('pointerdown',command);
 canvas.addEventListener('contextmenu',event=>event.preventDefault());
 canvas.addEventListener('wheel',event=>{event.preventDefault();zoom=THREE.MathUtils.clamp(zoom+event.deltaY*0.0004,0.6,1.4);updateCamera();},{passive:false});
 function stop(){moving=false;target.copy(hero.position);targetMarker.visible=false;}
-function reset(){hero.position.set(-5,0,5);stop();focus.set(0,0,0);zoom=0.8;updateCamera();}
+function reset(){hero.position.set(-5,0,5);stop();focus.set(0,0,0);zoom=0.8;spells.reset();selectedSpell=null;aimScreen=null;aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');updateCamera();}
 document.querySelector('#reset').addEventListener('click',reset);
 window.addEventListener('keydown',event=>{
+  if(event.repeat||event.ctrlKey||event.metaKey||event.altKey)return;
+  if(['INPUT','TEXTAREA','SELECT'].includes(event.target?.tagName)||event.target?.isContentEditable)return;
+  const spellKey=event.code?.replace('Key','');
+  if(SPELLS[spellKey]){event.preventDefault();castSpell(spellKey);return;}
+  if(event.code==='Escape')selectedSpell=null;
   if(event.code==='KeyS'||event.code==='Escape') stop();
   if(event.code==='Space'){event.preventDefault();focus.copy(hero.position);updateCamera();}
 });
@@ -141,6 +183,18 @@ function frame(){
   requestAnimationFrame(frame);
   const dt=Math.min(clock.getDelta(),0.05), t=clock.elapsedTime;
   if(document.hidden) return;
+  spells.update(dt);
+  updateAim();
+  if(messageLife>0){messageLife-=dt;if(messageLife<=0)spellMessage.textContent=selectedSpell?`${selectedSpell} · 바닥을 클릭해 시전`:'적은 다음 버전에 추가됩니다';}
+  for(const key of Object.keys(SPELLS)){
+    const cd=spells.cooldown(key),button=spellButtons[key];
+    cooldownLabels[key].textContent=cd>1e-8?Math.max(0.1,cd).toFixed(1)+'초':'준비';
+    button.disabled=cd>1e-8||spells.busy;
+    button.setAttribute('aria-pressed',String(selectedSpell===key));
+  }
+  aimRing.visible=selectedSpell==='E';aimRing.position.copy(hero.position);aimRing.position.y=0.1;
+  aimDot.visible=selectedSpell!==null;
+  if(selectedSpell){aimDot.position.copy(selectedSpell==='E'?spells.destination(aim):aim);aimDot.position.y=0.12;}
   diff.subVectors(target,hero.position);diff.y=0;
   const distance=diff.length();
   if(moving&&distance>0.025){
@@ -152,10 +206,11 @@ function frame(){
   } else moving=false;
   blend=THREE.MathUtils.damp(blend,moving?1:0,12,dt);
   character.animate({time:t,phase:walk,weight:blend,dt});
+  effects.update(dt,character);
   markerAge+=dt;targetRing.scale.setScalar(1+0.15*Math.sin(markerAge*10));
   if(markerAge>1.2&&!moving)targetMarker.visible=false;
   crystals.forEach((c,i)=>{c.rotation.y=t*0.45+i;c.position.y=3.2+Math.sin(t*1.5+i)*0.12;});
-  status.textContent=moving?'이동 중':'대기 중';
+  status.textContent=spells.casting?`${spells.casting} 시전 중`:moving?'이동 중':'대기 중';
   coords.textContent=`X ${hero.position.x.toFixed(1)} · Z ${hero.position.z.toFixed(1)}`;
   renderer.render(scene,camera);
   const p=hero.position.clone();p.y=3.2;p.project(camera);

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import * as real from '../vendor/three.module.js';
 import {createEzreal} from '../src/characters/ezreal.js';
+import {SPELLS,SpellSystem} from '../src/combat/spells.js';
+import {SpellEffects} from '../src/combat/spell-effects.js';
 const root=new URL('../',import.meta.url);
 const character=createEzreal();
 assert.equal(character.root.name,'Ezreal');
@@ -20,13 +22,13 @@ class Clock{getDelta(){now+=1/60;return 1/60}get elapsedTime(){return now}}
 class Renderer{constructor(){this.shadowMap={}}setPixelRatio(){}setSize(){}render(){}}
 const THREE={...real,WebGLRenderer:Renderer,Clock};
 const elements={};
-for(const id of ['#world','#status','#coords','#reset','#hero-label','#loading','#error'])elements[id]={style:{},hidden:false,textContent:'',listeners:{},addEventListener(k,fn){this.listeners[k]=fn},focus(){},getBoundingClientRect(){return{left:0,top:0,width:1280,height:800}}};
+for(const id of ['#world','#status','#coords','#reset','#hero-label','#loading','#error','#spell-message',...['Q','W','E','R'].flatMap(k=>['#spell-'+k,'#cooldown-'+k])])elements[id]={style:{},hidden:false,textContent:'',listeners:{},setAttribute(){},addEventListener(k,fn){this.listeners[k]=fn},focus(){},getBoundingClientRect(){return{left:0,top:0,width:1280,height:800}}};
 globalThis.document={querySelector:id=>elements[id],hidden:false};
 const keys={};globalThis.window={addEventListener(k,fn){keys[k]=fn}};
 globalThis.innerWidth=1280;globalThis.innerHeight=800;globalThis.devicePixelRatio=1;
 let frame;globalThis.requestAnimationFrame=fn=>{frame=fn};
 let game=fs.readFileSync(new URL('src/game.js',root),'utf8').replace(/^import .*;\n/gm,'');
-new Function('THREE','createEzreal',game)(THREE,createEzreal);
+new Function('THREE','createEzreal','SPELLS','SpellSystem','SpellEffects',game)(THREE,createEzreal,SPELLS,SpellSystem,SpellEffects);
 const tick=(n=1)=>{for(let i=0;i<n;i++)frame()};
 const click=(button,x,y)=>elements['#world'].listeners.pointerdown({button,clientX:x,clientY:y,preventDefault(){}});
 const initial=elements['#coords'].textContent;
@@ -39,4 +41,12 @@ const stopped=elements['#coords'].textContent;tick(60);assert.equal(elements['#c
 click(2,100,150);tick(600);
 assert(elements['#coords'].textContent.match(/-?\d+\.\d+/g).map(Number).every(n=>Math.abs(n)<=18.5));
 elements['#reset'].listeners.click();tick();assert.equal(elements['#coords'].textContent,initial);
+const key=code=>keys.keydown({code,preventDefault(){}});
+key('KeyQ');tick(15);assert.match(elements['#cooldown-Q'].textContent,/초/);
+key('KeyW');tick(15);assert.match(elements['#cooldown-W'].textContent,/초/);
+key('KeyE');tick(30);assert.notEqual(elements['#coords'].textContent,initial);
+key('KeyR');tick(20);assert.equal(elements['#status'].textContent,'R 시전 중');
+tick(160);assert.equal(elements['#status'].textContent,'대기 중');
+elements['#reset'].listeners.click();tick();assert.equal(elements['#cooldown-Q'].textContent,'준비');
+assert.equal(elements['#coords'].textContent,initial);
 console.log('PASS: model joints and animation, finite transforms, movement, arrival, right-click, stop, bounds, reset. WebGL rendering excluded.');
