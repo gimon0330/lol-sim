@@ -1,0 +1,42 @@
+// Deterministic integration checks. Only the WebGL renderer and browser shell are mocked.
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import * as real from '../vendor/three.module.js';
+import {createEzreal} from '../src/characters/ezreal.js';
+const root=new URL('../',import.meta.url);
+const character=createEzreal();
+assert.equal(character.root.name,'Ezreal');
+assert.equal(character.arms.length,2);assert.equal(character.legs.length,2);
+assert.equal(character.muzzle.parent,character.gauntlet);
+character.animate({time:1,phase:1,weight:1,dt:1/60});
+assert.notEqual(character.legs[0].hip.rotation.x,0);
+assert.notEqual(character.arms[0].shoulder.rotation.x,0);
+character.animate({time:2,phase:1,weight:0,dt:1/60});
+assert.equal(Math.abs(character.legs[0].hip.rotation.x),0);
+character.root.updateMatrixWorld(true);
+character.root.traverse(o=>assert(o.matrixWorld.elements.every(Number.isFinite)));
+let now=0;
+class Clock{getDelta(){now+=1/60;return 1/60}get elapsedTime(){return now}}
+class Renderer{constructor(){this.shadowMap={}}setPixelRatio(){}setSize(){}render(){}}
+const THREE={...real,WebGLRenderer:Renderer,Clock};
+const elements={};
+for(const id of ['#world','#status','#coords','#reset','#hero-label','#loading','#error'])elements[id]={style:{},hidden:false,textContent:'',listeners:{},addEventListener(k,fn){this.listeners[k]=fn},focus(){},getBoundingClientRect(){return{left:0,top:0,width:1280,height:800}}};
+globalThis.document={querySelector:id=>elements[id],hidden:false};
+const keys={};globalThis.window={addEventListener(k,fn){keys[k]=fn}};
+globalThis.innerWidth=1280;globalThis.innerHeight=800;globalThis.devicePixelRatio=1;
+let frame;globalThis.requestAnimationFrame=fn=>{frame=fn};
+let game=fs.readFileSync(new URL('src/game.js',root),'utf8').replace(/^import .*;\n/gm,'');
+new Function('THREE','createEzreal',game)(THREE,createEzreal);
+const tick=(n=1)=>{for(let i=0;i<n;i++)frame()};
+const click=(button,x,y)=>elements['#world'].listeners.pointerdown({button,clientX:x,clientY:y,preventDefault(){}});
+const initial=elements['#coords'].textContent;
+assert.equal(elements['#loading'].hidden,true);
+click(0,750,400);tick();assert.equal(elements['#status'].textContent,'이동 중');
+tick(240);assert.notEqual(elements['#coords'].textContent,initial);assert.equal(elements['#status'].textContent,'대기 중');
+const arrived=elements['#coords'].textContent;tick(60);assert.equal(elements['#coords'].textContent,arrived);
+click(2,100,150);tick(3);keys.keydown({code:'KeyS'});tick();
+const stopped=elements['#coords'].textContent;tick(60);assert.equal(elements['#coords'].textContent,stopped);
+click(2,100,150);tick(600);
+assert(elements['#coords'].textContent.match(/-?\d+\.\d+/g).map(Number).every(n=>Math.abs(n)<=18.5));
+elements['#reset'].listeners.click();tick();assert.equal(elements['#coords'].textContent,initial);
+console.log('PASS: model joints and animation, finite transforms, movement, arrival, right-click, stop, bounds, reset. WebGL rendering excluded.');
