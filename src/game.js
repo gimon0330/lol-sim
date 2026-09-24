@@ -8,11 +8,108 @@ import { HoldCamera, smoothAngle } from './motion.js';
 
 const canvas = document.querySelector('#world');
 const enemyStats = document.querySelector('#enemy-stats');
+const errorPanel = document.querySelector('#error');
+let contextCreationMessage = '';
+
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error || '알 수 없는 오류');
+}
+
+function safeParameter(gl, name) {
+  try {
+    return gl && name !== undefined && gl.getParameter ? String(gl.getParameter(name)) : '';
+  } catch {
+    return '';
+  }
+}
+
+function webglDiagnostics(error) {
+  const lines = [`초기화 오류: ${errorText(error)}`];
+  if (contextCreationMessage) lines.push(`브라우저 메시지: ${contextCreationMessage}`);
+  let gl = null;
+  let contextName = '';
+  try {
+    const probe = typeof document.createElement === 'function' ? document.createElement('canvas') : null;
+    for (const name of ['webgl2', 'webgl', 'experimental-webgl']) {
+      try {
+        gl = probe?.getContext(name, { alpha: false, antialias: false, failIfMajorPerformanceCaveat: false }) || null;
+      } catch {
+        gl = null;
+      }
+      if (gl) {
+        contextName = name;
+        break;
+      }
+    }
+  } catch {
+    gl = null;
+  }
+  if (gl) {
+    const debugInfo = gl.getExtension?.('WEBGL_debug_renderer_info');
+    const vendor = safeParameter(gl, debugInfo?.UNMASKED_VENDOR_WEBGL ?? gl.VENDOR);
+    const rendererName = safeParameter(gl, debugInfo?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER);
+    lines.push(`${contextName}: 컨텍스트 생성 가능`);
+    lines.push(`GL 버전: ${safeParameter(gl, gl.VERSION) || '확인 불가'}`);
+    if (vendor) lines.push(`GPU 제조사: ${vendor}`);
+    if (rendererName) lines.push(`GPU 렌더러: ${rendererName}`);
+    if (gl.isContextLost?.()) lines.push('상태: WebGL 컨텍스트가 손실됨');
+    lines.push('컨텍스트는 열렸지만 Three.js 초기화 단계에서 실패했습니다. 브라우저 확장 기능이나 GPU 드라이버를 확인하세요.');
+  } else {
+    lines.push('WebGL2/WebGL 컨텍스트를 만들 수 없습니다.');
+    lines.push('브라우저 설정만이 아니라 GPU 드라이버, 원격 데스크톱/가상 머신, 브라우저 실행 플래그가 원인일 수 있습니다.');
+  }
+  if (typeof window !== 'undefined' && 'isSecureContext' in window) lines.push(`보안 컨텍스트: ${window.isSecureContext ? '예' : '아니오'}`);
+  if (typeof location !== 'undefined') lines.push(`주소: ${location.protocol}//${location.host}`);
+  return lines.join('\n');
+}
+
+function showError(title, copy, detail) {
+  const titleNode = document.querySelector('#error-title');
+  const copyNode = document.querySelector('#error-copy');
+  const detailNode = document.querySelector('#error-detail');
+  if (titleNode) titleNode.textContent = title;
+  if (copyNode) copyNode.textContent = copy;
+  if (detailNode) detailNode.textContent = detail || '';
+  if (errorPanel) {
+    errorPanel.dataset.shown = 'true';
+    errorPanel.hidden = false;
+  }
+  const loading = document.querySelector('#loading');
+  if (loading) loading.hidden = true;
+}
+
+function createRenderer(targetCanvas) {
+  // "high-performance" can select a blocked/disconnected GPU on some laptops.
+  // Start with the browser's normal adapter selection, then retry once with a
+  // low-power context before reporting a real WebGL failure.
+  const attempts = [
+    { antialias: true, powerPreference: 'default' },
+    { antialias: false, powerPreference: 'low-power' },
+  ];
+  let lastError;
+  for (const options of attempts) {
+    try {
+      return new THREE.WebGLRenderer({
+        canvas: targetCanvas,
+        alpha: false,
+        failIfMajorPerformanceCaveat: false,
+        ...options,
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('WebGLRenderer를 만들 수 없습니다.');
+}
+
+canvas.addEventListener('webglcontextcreationerror', event => {
+  contextCreationMessage = event.statusMessage || '브라우저가 WebGL 컨텍스트 생성을 거부했습니다.';
+});
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer = createRenderer(canvas);
 } catch (error) {
-  document.querySelector('#error').hidden = false;
+  showError('3D 초기화 실패', 'WebGL 컨텍스트를 만들지 못했습니다. 아래 진단값을 확인하면 원인을 구분할 수 있습니다.', webglDiagnostics(error));
   throw error;
 }
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -226,7 +323,10 @@ window.addEventListener('blur',()=>cameraHold.release());
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cameraHold.release();});
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();cameraDirty=true;updateCamera();}
 window.addEventListener('resize',resize);resize();
-canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();document.querySelector('#error').hidden=false;});
+canvas.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  showError('WebGL 컨텍스트가 중단되었습니다', '브라우저가 GPU 컨텍스트를 회수했습니다. 다른 GPU 사용 앱이나 원격 데스크톱을 종료한 뒤 다시 열어 주세요.', '컨텍스트 손실 이벤트가 발생했습니다.\n다시 열기 버튼으로 페이지를 재시작하세요.');
+});
 const clock=new THREE.Clock();
 const diff=new THREE.Vector3();
 function frame(){
