@@ -2,6 +2,9 @@ import * as THREE from '../vendor/three.module.js';
 import { createEzreal } from './characters/ezreal.js';
 import { SPELLS, SpellSystem } from './combat/spells.js';
 import { SpellEffects } from './combat/spell-effects.js';
+import { AttackSystem, BASIC_ATTACK, isAlive } from './combat/attacks.js';
+import { EnemySystem } from './enemies/enemies.js';
+import { HoldCamera, smoothAngle } from './motion.js';
 
 const canvas = document.querySelector('#world');
 const status = document.querySelector('#status');
@@ -13,7 +16,7 @@ try {
   document.querySelector('#error').hidden = false;
   throw error;
 }
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -25,6 +28,7 @@ scene.fog = new THREE.Fog('#101f26', 48, 95);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 140);
 const focus = new THREE.Vector3(0, 0, 0);
 let zoom = 0.8;
+const cameraHold=new HoldCamera();
 function updateCamera() {
   camera.position.copy(focus).add(new THREE.Vector3(24, 31, 24).multiplyScalar(zoom));
   camera.lookAt(focus);
@@ -33,7 +37,7 @@ function updateCamera() {
 scene.add(new THREE.HemisphereLight(0xcceeff, 0x293923, 2.1));
 const sun = new THREE.DirectionalLight(0xffe5b5, 3.3);
 sun.position.set(-15, 30, 8); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 85 });
 sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.035;
 scene.add(sun);
@@ -61,10 +65,17 @@ function random() { seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; 
 // A bounded, obstacle-free training floor. Scenery stays outside the navigation square.
 box(48, 1.2, 48, '#273b32', 0, -0.7, 0);
 box(38.8, 0.15, 38.8, '#52634f', 0, -0.1, 0);
+// Draw the 169 ground tiles in six instanced batches instead of 169 draw calls.
+const tiles=new Map();
 for(let x=-18;x<=18;x+=3) for(let z=-18;z<=18;z+=3) {
-  const onLane=Math.abs(x-z)<5;
-  const palette=onLane?['#858b76','#919780','#777f6b']:['#506647','#566d4a','#5d7250'];
-  box(2.94,0.07,2.94,palette[Math.floor(random()*3)],x,-0.005,z);
+  const palette=Math.abs(x-z)<5?['#858b76','#919780','#777f6b']:['#506647','#566d4a','#5d7250'];
+  const color=palette[Math.floor(random()*3)];if(!tiles.has(color))tiles.set(color,[]);tiles.get(color).push([x,z]);
+}
+const tileGeometry=new THREE.BoxGeometry(2.94,0.07,2.94),tileMatrix=new THREE.Matrix4();
+for(const [color,positions] of tiles){
+  const batch=new THREE.InstancedMesh(tileGeometry,mat(color),positions.length);batch.receiveShadow=true;
+  positions.forEach(([x,z],i)=>batch.setMatrixAt(i,tileMatrix.makeTranslation(x,-0.005,z)));
+  batch.instanceMatrix.needsUpdate=true;scene.add(batch);
 }
 for(const axis of [-1,1]) {
   box(39,0.22,0.35,'#a6986a',0,0.03,axis*19.5);
@@ -114,10 +125,18 @@ const target=hero.position.clone();
 const pointer=new THREE.Vector2(); const hit=new THREE.Vector3();
 const speed=5.5;
 let moving=false, walk=0, blend=0, markerAge=10;
-// The next feature can register enemy objects here; no enemies spawn in this version.
-const enemies=[];
+const enemySystem=new EnemySystem(scene,hero);
+const enemies=enemySystem.enemies;
+let desiredYaw=hero.rotation.y;
+const attackSelection=ring(1.0,0.08,'#ff8064');attackSelection.visible=false;
+function combatEvent(event){
+  effects.handle(event);
+  if(event.type==='cast')desiredYaw=Math.atan2(event.direction.x,event.direction.z);
+}
+
 const effects=new SpellEffects(scene,hero);
-const spells=new SpellSystem({hero,getEnemies:()=>enemies,onEvent:event=>effects.handle(event)});
+const spells=new SpellSystem({hero,getEnemies:()=>enemies,onEvent:combatEvent});
+const attacks=new AttackSystem({hero,getEnemies:()=>enemies,onEvent:combatEvent});
 const aim=hero.position.clone().add(new THREE.Vector3(0,0,15));
 let aimScreen=null,selectedSpell=null,messageLife=0;
 const spellMessage=document.querySelector('#spell-message');
@@ -139,8 +158,7 @@ function castSpell(key){
   if(!spells.cast(key,aim)){
     message(spells.busy?'시전 중입니다':`${key} 재사용까지 ${spells.cooldown(key).toFixed(1)}초`);return;
   }
-  stop();selectedSpell=null;
-  if(key==='E'){focus.copy(hero.position);updateCamera();}
+  attacks.cancelWindup();stopMovement();selectedSpell=null;
   message(`${key} · ${SPELLS[key].name}`);
 }
 for(const [key,button] of Object.entries(spellButtons))button.addEventListener('click',()=>{
@@ -156,24 +174,40 @@ function command(event) {
   if(event.button===0&&selectedSpell){castSpell(selectedSpell);return;}
   selectedSpell=null;
   if(spells.busy)return;
+  if(event.button===2){
+    let enemy=null;
+    if(event.shiftKey){attacks.attackMove(aim);enemy=attacks.target;}
+    else {scene.updateMatrixWorld(true);enemy=enemySystem.pick(raycaster);if(enemy)attacks.select(enemy);}
+    if(enemy||event.shiftKey){stopMovement();message(enemy?'자동 공격 · 사거리 밖이면 추적':'공격 대기 · 지정 위치 가까운 적 탐색');return;}
+  }
+  attacks.cancel();
   target.set(THREE.MathUtils.clamp(aim.x,-18.5,18.5),0,THREE.MathUtils.clamp(aim.z,-18.5,18.5));
   targetMarker.position.copy(target);targetMarker.visible=true;markerAge=0;moving=true;
 }
 canvas.addEventListener('pointerdown',command);
 canvas.addEventListener('contextmenu',event=>event.preventDefault());
 canvas.addEventListener('wheel',event=>{event.preventDefault();zoom=THREE.MathUtils.clamp(zoom+event.deltaY*0.0004,0.6,1.4);updateCamera();},{passive:false});
-function stop(){moving=false;target.copy(hero.position);targetMarker.visible=false;}
-function reset(){hero.position.set(-5,0,5);stop();focus.set(0,0,0);zoom=0.8;spells.reset();selectedSpell=null;aimScreen=null;aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');updateCamera();}
+function stopMovement(){moving=false;target.copy(hero.position);targetMarker.visible=false;}
+function stop(){stopMovement();attacks.cancel();}
+function reset(){
+  hero.position.set(-5,0,5);stop();attacks.reset();spells.reset();enemySystem.reset();
+  focus.set(0,0,0);zoom=0.8;cameraHold.release();selectedSpell=null;aimScreen=null;
+  aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');updateCamera();
+}
 document.querySelector('#reset').addEventListener('click',reset);
 window.addEventListener('keydown',event=>{
-  if(event.repeat||event.ctrlKey||event.metaKey||event.altKey)return;
   if(['INPUT','TEXTAREA','SELECT'].includes(event.target?.tagName)||event.target?.isContentEditable)return;
+  if(event.code==='Space'){event.preventDefault();cameraHold.press();return;}
+  if(event.repeat||event.ctrlKey||event.metaKey||event.altKey)return;
   const spellKey=event.code?.replace('Key','');
   if(SPELLS[spellKey]){event.preventDefault();castSpell(spellKey);return;}
   if(event.code==='Escape')selectedSpell=null;
   if(event.code==='KeyS'||event.code==='Escape') stop();
-  if(event.code==='Space'){event.preventDefault();focus.copy(hero.position);updateCamera();}
+
 });
+window.addEventListener('keyup',event=>{if(event.code==='Space'){event.preventDefault();cameraHold.release();}});
+window.addEventListener('blur',()=>cameraHold.release());
+document.addEventListener('visibilitychange',()=>{if(document.hidden)cameraHold.release();});
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();updateCamera();}
 window.addEventListener('resize',resize);resize();
 canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();document.querySelector('#error').hidden=false;});
@@ -183,9 +217,21 @@ function frame(){
   requestAnimationFrame(frame);
   const dt=Math.min(clock.getDelta(),0.05), t=clock.elapsedTime;
   if(document.hidden) return;
+  enemySystem.update(dt,camera);
   spells.update(dt);
+  attacks.update(dt,!spells.busy);
+  const attackTarget=attacks.refreshTarget();
+  if(attackTarget&&!spells.busy){
+    const attackDistance=Math.hypot(attackTarget.position.x-hero.position.x,attackTarget.position.z-hero.position.z);
+    desiredYaw=Math.atan2(attackTarget.position.x-hero.position.x,attackTarget.position.z-hero.position.z);
+    if(attackDistance>BASIC_ATTACK.range&&!attacks.winding){target.copy(attackTarget.position);moving=true;}
+    else stopMovement();
+  }
+  if(spells.busy||attacks.winding)moving=false;
+  attackSelection.visible=isAlive(attackTarget);
+  if(attackSelection.visible){attackSelection.position.copy(attackTarget.position);attackSelection.position.y=0.1;}
   updateAim();
-  if(messageLife>0){messageLife-=dt;if(messageLife<=0)spellMessage.textContent=selectedSpell?`${selectedSpell} · 바닥을 클릭해 시전`:'적은 다음 버전에 추가됩니다';}
+  if(messageLife>0){messageLife-=dt;if(messageLife<=0)spellMessage.textContent=selectedSpell?`${selectedSpell} · 바닥을 클릭해 시전`:'우클릭: 적 공격 · Shift+우클릭: 바닥 기준 자동 공격';}
   for(const key of Object.keys(SPELLS)){
     const cd=spells.cooldown(key),button=spellButtons[key];
     cooldownLabels[key].textContent=cd>1e-8?Math.max(0.1,cd).toFixed(1)+'초':'준비';
@@ -201,17 +247,21 @@ function frame(){
     const step=Math.min(speed*dt,distance);
     hero.position.addScaledVector(diff,step/distance);
     const angle=Math.atan2(diff.x,diff.z);
-    hero.rotation.y+=Math.atan2(Math.sin(angle-hero.rotation.y),Math.cos(angle-hero.rotation.y))*Math.min(1,dt*14);
-    walk+=step*2.4;
+    desiredYaw=angle;
   } else moving=false;
   blend=THREE.MathUtils.damp(blend,moving?1:0,12,dt);
+  hero.rotation.y=smoothAngle(hero.rotation.y,desiredYaw,dt);
+  // Continue the stride clock while fading out, instead of freezing a raised leg.
+  walk+=speed*2.4*dt*blend;
   character.animate({time:t,phase:walk,weight:blend,dt});
   effects.update(dt,character);
   markerAge+=dt;targetRing.scale.setScalar(1+0.15*Math.sin(markerAge*10));
   if(markerAge>1.2&&!moving)targetMarker.visible=false;
   crystals.forEach((c,i)=>{c.rotation.y=t*0.45+i;c.position.y=3.2+Math.sin(t*1.5+i)*0.12;});
-  status.textContent=spells.casting?`${spells.casting} 시전 중`:moving?'이동 중':'대기 중';
+  status.textContent=spells.casting?`${spells.casting} 시전 중`:moving?'이동 중':attackTarget?'자동 공격':'대기 중';
+  document.querySelector('#enemy-stats').textContent=`적 ${enemies.filter(isAlive).length} · 처치 ${enemySystem.kills}`;
   coords.textContent=`X ${hero.position.x.toFixed(1)} · Z ${hero.position.z.toFixed(1)}`;
+  cameraHold.update(focus,hero.position,dt);updateCamera();
   renderer.render(scene,camera);
   const p=hero.position.clone();p.y=3.2;p.project(camera);
   const health=document.querySelector('#hero-label');

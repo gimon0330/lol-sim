@@ -1,5 +1,7 @@
 import * as THREE from '../../vendor/three.module.js';
 import { SPELLS } from './spells.js';
+import { BASIC_ATTACK } from './attacks.js';
+const VISUALS={...SPELLS,A:{...BASIC_ATTACK,recovery:BASIC_ATTACK.windup}};
 
 export class SpellEffects {
   constructor(scene,hero){this.scene=scene;this.hero=hero;this.shots=new Map();this.marks=new Map();this.bursts=[];this.pose=null;}
@@ -17,9 +19,10 @@ export class SpellEffects {
   }
   handle(event){
     const {type,key,projectile:p,enemy}=event;
-    if(type==='cast')this.pose={key,age:0,duration:SPELLS[key].recovery+0.18};
+    if(type==='cancelAttack'&&this.pose?.key==='A')this.pose.age=Math.max(this.pose.age,this.pose.duration-0.14);
+    if(type==='cast')this.pose={key,age:0,duration:VISUALS[key].recovery+0.18};
     if(type==='projectile'){
-      const group=new THREE.Group(),color=SPELLS[p.key].color;
+      const group=new THREE.Group(),color=VISUALS[p.key].color;
       if(p.key==='W'){
         this.add(group,new THREE.TorusGeometry(0.48,0.09,8,32),color);
         const inner=this.add(group,new THREE.TorusGeometry(0.25,0.03,6,24),0xfff2b0);inner.rotation.y=Math.PI/3;
@@ -35,7 +38,7 @@ export class SpellEffects {
     }
     if(type==='removeProjectile'){const shot=this.shots.get(p.id);if(shot){this.dispose(shot.group);this.shots.delete(p.id);}}
     if(type==='blink'){this.burst(event.from,0x65ceff,0.9);this.burst(event.to,0xffdd8a,1.1);}
-    if(type==='impact')this.burst(event.position,SPELLS[key].color,0.45);
+    if(type==='impact')this.burst(event.position,VISUALS[key].color,0.45);
     if(type==='mark'){
       if(this.marks.has(enemy))return;
       const group=new THREE.Group();
@@ -75,7 +78,7 @@ export class SpellEffects {
       if(pose.key==='R'){
         const right=character.arms.find(a=>a.side===-1);
         right.shoulder.rotation.x=THREE.MathUtils.lerp(right.shoulder.rotation.x,-1.1,weight);
-        right.elbow.rotation.x=-0.8*weight;
+        right.elbow.rotation.x=THREE.MathUtils.lerp(right.elbow.rotation.x,-0.8,weight);
       }
     }
   }

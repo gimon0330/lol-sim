@@ -5,17 +5,17 @@
 .spellbar{position:absolute;bottom:140px;left:50%;transform:translateX(-50%);display:flex;gap:8px}.spell{position:relative;width:108px;min-height:72px;padding:8px;background:#112b36ed;color:#dcece5;border:1px solid #548295;cursor:pointer;border-radius:3px;display:grid;grid-template-columns:24px 1fr;align-items:center;gap:5px;text-align:left}.spell kbd{font-family:Georgia,serif;color:#9fe9ff;font-size:22px}.spell .spell-name{font-size:12px}.spell .cooldown{grid-column:1/-1;font-size:13px;text-align:center;color:#9cdaca;font-variant-numeric:tabular-nums}.spell[data-warm]{border-color:#a48b53}.spell[data-warm] kbd{color:#f4d483}.spell:disabled{opacity:.55;cursor:default}.spell[aria-pressed="true"]{border:2px solid #ffeea4;background:#315361}.spell:focus-visible{outline:2px solid #fff0a8;outline-offset:3px}.spell:hover:not(:disabled){background:#284b59}.hint{bottom:253px}.spell-message{position:absolute;bottom:221px;left:50%;transform:translateX(-50%);margin:0;color:#efd697;text-shadow:0 1px 3px #000;background:#10232ac9;padding:5px 10px;border-radius:3px;font-size:13px;white-space:nowrap}@media(max-width:600px){.spellbar{bottom:120px;gap:5px;width:calc(100% - 32px)}.spell{width:auto;flex:1;min-width:0;padding:6px;grid-template-columns:20px 1fr}.spell .spell-name{font-size:11px}.spell-message{bottom:201px;font-size:12px}.hint{bottom:232px}.bottom{gap:8px}.level{display:none}}
 </style></head><body>
 <canvas id="world" tabindex="0" aria-label="3D 이동 연습장. 바닥을 클릭하거나 터치하면 이동합니다. S 키로 멈춥니다."></canvas>
-<header class="top"><div class="brand"><div class="eyebrow">TRAINING GROUNDS</div><h1>EZREAL</h1><p>무모한 탐험가 · 이동 연습장</p></div><span class="badge">SPELLS 02</span></header>
+<header class="top"><div class="brand"><div class="eyebrow">TRAINING GROUNDS</div><h1>EZREAL</h1><p>무모한 탐험가 · 무적 연습장</p></div><span class="badge">COMBAT 03</span></header>
 <div id="hero-label"><b>이즈리얼</b><i></i></div>
-<p class="hint">마우스 조준 + Q/W/E/R · 스킬 버튼 선택 후 바닥 터치</p>
-<div class="keys"><kbd>S</kbd> 멈추기<br><kbd>SPACE</kbd> 캐릭터 중심 보기<br><kbd>휠</kbd> 확대 / 축소</div>
+<p class="hint">우클릭: 적 공격 · Shift+우클릭: 클릭 지점 가까운 적</p>
+<div class="keys"><kbd>S</kbd> 멈추기<br><kbd>SPACE</kbd> 누르는 동안 화면 고정<br><kbd>휠</kbd> 확대 / 축소</div>
 <div class="spellbar" role="group" aria-label="스킬">
 <button id="spell-Q" class="spell" aria-pressed="false" title="신비한 화살: 피해 50, 쿨타임 3초. 적중 시 전체 스킬 쿨타임 1초 감소"><kbd>Q</kbd><span class="spell-name">신비한 화살</span><span id="cooldown-Q" class="cooldown">준비</span></button>
 <button id="spell-W" class="spell" data-warm aria-pressed="false" title="정수의 흐름: 5초 표식, 다른 스킬 적중 시 추가 피해 100. 쿨타임 6초"><kbd>W</kbd><span class="spell-name">정수의 흐름</span><span id="cooldown-W" class="cooldown">준비</span></button>
 <button id="spell-E" class="spell" aria-pressed="false" title="비전 이동: 사거리 25, 도착지 25 이내 적에게 피해 50. 쿨타임 10초"><kbd>E</kbd><span class="spell-name">비전 이동</span><span id="cooldown-E" class="cooldown">준비</span></button>
 <button id="spell-R" class="spell" data-warm aria-pressed="false" title="정조준 일격: 1초 준비 후 관통 투사체, 피해 200, 쿨타임 20초"><kbd>R</kbd><span class="spell-name">정조준 일격</span><span id="cooldown-R" class="cooldown">준비</span></button>
-</div><p id="spell-message" class="spell-message" role="status">적은 다음 버전에 추가됩니다</p>
-<footer class="bottom"><div class="level" aria-label="레벨 1">1</div><div class="details"><div class="name"><strong>이즈리얼</strong><span id="status" role="status">대기 중</span></div><div class="bar" aria-label="체력 100퍼센트"></div><div class="sub"><span>이동 속도 5.5</span><span id="coords">X -5.0 · Z 5.0</span></div></div><button class="reset" id="reset">연습 초기화</button></footer>
+</div><p id="spell-message" class="spell-message" role="status">사방에서 적이 다가옵니다 · Q/W/E/R로 스킬 시전</p>
+<footer class="bottom"><div class="level" aria-label="레벨 1">1</div><div class="details"><div class="name"><strong>이즈리얼</strong><span id="status" role="status">대기 중</span></div><div class="bar" aria-label="체력 100퍼센트"></div><div class="sub"><span id="enemy-stats">적 4 · 처치 0</span><span id="coords">X -5.0 · Z 5.0</span></div></div><button class="reset" id="reset">연습 초기화</button></footer>
 <div id="loading" class="overlay"><h2>연습장 준비 중</h2><p>잠시만 기다려 주세요.</p></div>
 <div id="error" class="overlay" hidden><h2>3D 화면을 열 수 없습니다</h2><p>브라우저의 하드웨어 가속 설정을 확인하고 새로고침해 주세요. 최신 Chrome, Edge 또는 Safari에서 실행할 수 있습니다.</p><button onclick="location.reload()" class="reset">다시 열기</button></div>
 <noscript><div class="overlay">이 게임을 실행하려면 JavaScript를 켜 주세요.</div></noscript>

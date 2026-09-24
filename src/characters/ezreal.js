@@ -128,7 +128,7 @@ export function createEzreal() {
       shoulder.rotation.z=side*(0.09+0.04*weight);
       elbow.rotation.x=-0.22-Math.max(0,Math.sin(phase)*side)*0.45*weight;
     }
-    body.position.y=Math.abs(Math.sin(phase))*0.065*weight+Math.sin(time*2.2)*0.018*(1-weight);
+    body.position.y=(1-Math.cos(phase*2))*0.0325*weight+Math.sin(time*2.2)*0.018*(1-weight);
     body.rotation.x=0.07*weight;
     body.rotation.z=Math.sin(phase)*0.035*weight;
     head.rotation.y=Math.sin(time*0.7)*0.055*(1-weight);

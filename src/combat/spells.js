@@ -50,7 +50,7 @@ export class SpellSystem {
     const direction=new THREE.Vector3(aim.x-this.hero.position.x,0,aim.z-this.hero.position.z);
     if(direction.lengthSq()<1e-8)direction.set(Math.sin(this.hero.rotation.y),0,Math.cos(this.hero.rotation.y));
     direction.normalize();
-    this.hero.rotation.y=Math.atan2(direction.x,direction.z);
+    // The render/controller layer smoothly turns toward the emitted cast direction.
     this.readyAt[key]=this.time+cfg.cooldown;this.lockUntil=this.time+cfg.recovery;
     this.emit('cast',{key,direction:direction.clone()});
     if(key==='E'){
