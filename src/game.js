@@ -4,6 +4,7 @@ import { SPELLS, SpellSystem } from './combat/spells.js';
 import { SpellEffects } from './combat/spell-effects.js';
 import { AttackSystem, BASIC_ATTACK, isAlive } from './combat/attacks.js';
 import { EnemySystem } from './enemies/enemies.js';
+import { EnemyCombat, PlayerState } from './combat/enemy-combat.js';
 import { HoldCamera, EdgeCamera, smoothAngle } from './motion.js';
 
 const canvas = document.querySelector('#world');
@@ -230,6 +231,8 @@ const speed=5.5;
 let moving=false, walk=0, blend=0, markerAge=10, resumeMovement=false;
 const enemySystem=new EnemySystem(scene,hero);
 const enemies=enemySystem.enemies;
+const player=new PlayerState();
+const enemyCombat=new EnemyCombat({scene,hero,getEnemies:()=>enemies,player});
 let desiredYaw=hero.rotation.y;
 const attackSelection=ring(1.0,0.08,'#ff8064');attackSelection.visible=false;
 function combatEvent(event){
@@ -260,6 +263,8 @@ function updateAim(event){
   if(raycaster.ray.intersectPlane(ground,hit))aim.set(hit.x,0,hit.z);
 }
 function castSpell(key){
+  if(player.dead)return;
+  if(key==='E'&&player.rooted>0){message('속박 중에는 비전 이동을 사용할 수 없습니다');return;}
   updateAim();
   if(!spells.cast(key,aim)){
     message(spells.busy?'시전 중입니다':`${key} 재사용까지 ${spells.cooldown(key).toFixed(1)}초`);return;
@@ -271,7 +276,7 @@ function castSpell(key){
   moving=false;
   targetMarker.visible=false;
   selectedSpell=null;
-  if(key==='E'){focus.copy(hero.position);cameraDirty=true;updateCamera();}
+  if(key==='E'&&cameraHold.held){focus.copy(hero.position);cameraDirty=true;updateCamera();}
   message(`${key} · ${SPELLS[key].name}`);
 }
 for(const [key,button] of Object.entries(spellButtons))button.addEventListener('click',()=>{
@@ -284,6 +289,7 @@ window.addEventListener('pointermove',event=>{if(event.pointerType!=='touch'){ed
 document.addEventListener('pointerout',event=>{if(!event.relatedTarget)edgeCamera.clear();});
 window.addEventListener('pointercancel',()=>edgeCamera.clear());
 function command(event) {
+  if(player.dead)return;
   if(event.button!==0&&event.button!==2) return;
   event.preventDefault();canvas.focus({preventScroll:true});
   updateAim(event);
@@ -307,7 +313,8 @@ canvas.addEventListener('wheel',event=>{event.preventDefault();zoom=THREE.MathUt
 function stopMovement(){moving=false;target.copy(hero.position);targetMarker.visible=false;resumeMovement=false;}
 function stop(){stopMovement();attacks.cancel();}
 function reset(){
-  hero.position.set(-5,0,5);stop();attacks.reset();spells.reset();enemySystem.reset();
+  enemyCombat.reset();player.reset();
+  hero.visible=true;hero.position.set(-5,0,5);stop();attacks.reset();spells.reset();enemySystem.reset();
   focus.set(0,0,0);zoom=0.8;cameraHold.release();edgeCamera.clear();selectedSpell=null;aimScreen=null;
   aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');cameraDirty=true;updateCamera();
 }
@@ -337,7 +344,15 @@ function frame(){
   requestAnimationFrame(frame);
   const dt=Math.min(clock.getDelta(),0.05), t=clock.elapsedTime;
   if(document.hidden) return;
+  player.update(dt);
+  const playerLabel=document.querySelector('#player-status');
+  if(playerLabel){const label=player.dead?`부활 ${Math.max(0,3-player.deadFor).toFixed(1)}초`:`HP ${Math.ceil(player.health)}${player.rooted>0?' · 속박':player.slowed>0?' · 둔화':''}`;if(playerLabel.textContent!==label)playerLabel.textContent=label;}
+  const damageFlash=document.querySelector('#damage-flash');if(damageFlash)damageFlash.style.opacity=String(player.flash*2);
+  if(player.dead){stop();hero.visible=false;if(player.deadFor>=3){reset();hero.visible=true;}else{if(cameraHold.update(focus,hero.position,dt)||edgeCamera.update(focus,dt,innerWidth,innerHeight,cameraHold.held,zoom))cameraDirty=true;updateCamera();renderer.render(scene,camera);return;}}
+  hero.visible=true;
   enemySystem.update(dt,camera);
+  enemyCombat.update(dt);
+  if(player.dead){stop();attacks.reset();spells.reset();enemyCombat.reset();hero.visible=false;renderer.render(scene,camera);return;}
   spells.update(dt);
   attacks.update(dt,!spells.busy);
   const attackTarget=attacks.refreshTarget();
@@ -374,13 +389,13 @@ function frame(){
   if(selectedSpell){aimDot.position.copy(selectedSpell==='E'?spells.destination(aim):aim);aimDot.position.y=0.12;}
   diff.subVectors(target,hero.position);diff.y=0;
   const distance=diff.length();
-  if(moving&&distance>0.025){
-    const step=Math.min(speed*dt,distance);
+  if(moving&&distance>0.025&&!player.dead){
+    const step=Math.min(speed*dt*(player.rooted>0?0:player.slowed>0?0.65:1),distance);
     hero.position.addScaledVector(diff,step/distance);
     const angle=Math.atan2(diff.x,diff.z);
     desiredYaw=angle;
   } else moving=false;
-  blend=THREE.MathUtils.damp(blend,moving?1:0,12,dt);
+  blend=THREE.MathUtils.damp(blend,moving&&player.rooted<=0?1:0,12,dt);
   hero.rotation.y=smoothAngle(hero.rotation.y,desiredYaw,dt);
   // Continue the stride clock while fading out, instead of freezing a raised leg.
   walk+=speed*2.4*dt*blend;

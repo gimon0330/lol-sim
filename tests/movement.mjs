@@ -7,8 +7,10 @@ import {SPELLS,SpellSystem} from '../src/combat/spells.js';
 import {SpellEffects} from '../src/combat/spell-effects.js';
 import {AttackSystem,BASIC_ATTACK,isAlive} from '../src/combat/attacks.js';
 import {EnemySystem as RealEnemySystem} from '../src/enemies/enemies.js';
+import {PlayerState} from '../src/combat/enemy-combat.js';
+class EnemyCombat {update(){}reset(){}} // Existing movement suite isolates incoming damage.
 import {HoldCamera,EdgeCamera,smoothAngle} from '../src/motion.js';
-class EnemySystem extends RealEnemySystem {constructor(scene,hero){super(scene,hero,{random:()=>0.5});}}
+class EnemySystem extends RealEnemySystem {constructor(scene,hero){super(scene,hero,{random:()=>0.5,includeLux:false});}}
 const root=new URL('../',import.meta.url);
 const character=createEzreal();
 assert.equal(character.root.name,'Ezreal');
@@ -33,7 +35,7 @@ const keys={};globalThis.window={addEventListener(k,fn){keys[k]=fn}};
 globalThis.innerWidth=1280;globalThis.innerHeight=800;globalThis.devicePixelRatio=1;
 let frame;globalThis.requestAnimationFrame=fn=>{frame=fn};
 let game=fs.readFileSync(new URL('src/game.js',root),'utf8').replace(/^import .*;\n/gm,'');
-new Function('THREE','createEzreal','SPELLS','SpellSystem','SpellEffects','AttackSystem','BASIC_ATTACK','isAlive','EnemySystem','HoldCamera','EdgeCamera','smoothAngle',game)(THREE,createEzreal,SPELLS,SpellSystem,SpellEffects,AttackSystem,BASIC_ATTACK,isAlive,EnemySystem,HoldCamera,EdgeCamera,smoothAngle);
+new Function('THREE','createEzreal','SPELLS','SpellSystem','SpellEffects','AttackSystem','BASIC_ATTACK','isAlive','EnemySystem','HoldCamera','EdgeCamera','smoothAngle','EnemyCombat','PlayerState',game)(THREE,createEzreal,SPELLS,SpellSystem,SpellEffects,AttackSystem,BASIC_ATTACK,isAlive,EnemySystem,HoldCamera,EdgeCamera,smoothAngle,EnemyCombat,PlayerState);
 const tick=(n=1)=>{for(let i=0;i<n;i++)frame()};
 const click=(button,x,y,shiftKey=false)=>elements['#world'].listeners.pointerdown({button,clientX:x,clientY:y,shiftKey,preventDefault(){}});
 const key=code=>keys.keydown({code,preventDefault(){}});
@@ -69,6 +71,12 @@ keys.keyup({code:'Space',preventDefault(){}});
 const frozenCamera=renderedCamera.position.clone();click(0,400,400);tick(60);
 assert(renderedCamera.position.distanceTo(frozenCamera)<1e-10);
 key('Space');keys.blur();const blurCamera=renderedCamera.position.clone();tick(30);assert(renderedCamera.position.distanceTo(blurCamera)<1e-10);
+// Real game event wiring: stationary edge pointer pans each frame; center and blur stop it.
+keys.pointermove({clientX:1279,clientY:400,pointerType:'mouse'});
+const edgeStart=renderedCamera.position.clone();tick(30);assert(renderedCamera.position.x>edgeStart.x);assert(renderedCamera.position.z<edgeStart.z);
+keys.pointermove({clientX:640,clientY:400,pointerType:'mouse'});const edgeStop=renderedCamera.position.clone();tick(30);assert(renderedCamera.position.distanceTo(edgeStop)<1e-10);
+keys.pointermove({clientX:0,clientY:400,pointerType:'mouse'});keys.blur();const blurStop=renderedCamera.position.clone();tick(30);assert(renderedCamera.position.distanceTo(blurStop)<1e-10);
+keys.pointermove({clientX:0,clientY:400,pointerType:'mouse'});docEvents.pointerout({relatedTarget:null});tick(30);assert(renderedCamera.position.distanceTo(blurStop)<1e-10);
 // Real projection and raycasting: right-click the rendered enemy body.
 elements['#reset'].listeners.click();tick();
 const enemyRoot=renderedScene.children.find(o=>o.userData.enemy&&o.userData.enemy.position.z===18.2);

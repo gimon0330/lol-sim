@@ -36,7 +36,7 @@ const setup=(enemies)=>{const hero=new THREE.Group(),events=[];return {hero,even
   const e=enemy(6);enemies.push(e);a.update(0.5);assert.equal(e.health,170);
 }
 {
-  const scene=new THREE.Scene(),hero=new THREE.Group(),system=new EnemySystem(scene,hero,{random:()=>0.5});
+  const scene=new THREE.Scene(),hero=new THREE.Group(),system=new EnemySystem(scene,hero,{random:()=>0.5,includeLux:false});
   assert.equal(system.enemies.length,4);
   assert.deepEqual(system.enemies.map(e=>[e.position.x,e.position.z]),[[18.2,0],[-18.2,0],[0,18.2],[0,-18.2]]);
   const before=system.enemies.map(e=>e.position.length());system.update(1,new THREE.PerspectiveCamera());
