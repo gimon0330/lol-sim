@@ -4,7 +4,7 @@ import { SPELLS, SpellSystem } from './combat/spells.js';
 import { SpellEffects } from './combat/spell-effects.js';
 import { AttackSystem, BASIC_ATTACK, isAlive } from './combat/attacks.js';
 import { EnemySystem } from './enemies/enemies.js';
-import { HoldCamera, smoothAngle } from './motion.js';
+import { HoldCamera, EdgeCamera, smoothAngle } from './motion.js';
 
 const canvas = document.querySelector('#world');
 const enemyStats = document.querySelector('#enemy-stats');
@@ -126,6 +126,7 @@ const focus = new THREE.Vector3(0, 0, 0);
 let zoom = 0.8;
 let cameraDirty = true;
 const cameraHold=new HoldCamera();
+const edgeCamera=new EdgeCamera();
 const cameraOffset = new THREE.Vector3(24, 31, 24);
 function updateCamera() {
   if (!cameraDirty) return;
@@ -279,6 +280,9 @@ for(const [key,button] of Object.entries(spellButtons))button.addEventListener('
   message(selectedSpell?`${key} · 바닥을 클릭하거나 터치해 조준`:'스킬 선택 취소');
 });
 canvas.addEventListener('pointermove',event=>updateAim(event));
+window.addEventListener('pointermove',event=>{if(event.pointerType!=='touch'){edgeCamera.move(event.clientX,event.clientY);aimScreen={x:event.clientX,y:event.clientY};}});
+document.addEventListener('pointerout',event=>{if(!event.relatedTarget)edgeCamera.clear();});
+window.addEventListener('pointercancel',()=>edgeCamera.clear());
 function command(event) {
   if(event.button!==0&&event.button!==2) return;
   event.preventDefault();canvas.focus({preventScroll:true});
@@ -304,7 +308,7 @@ function stopMovement(){moving=false;target.copy(hero.position);targetMarker.vis
 function stop(){stopMovement();attacks.cancel();}
 function reset(){
   hero.position.set(-5,0,5);stop();attacks.reset();spells.reset();enemySystem.reset();
-  focus.set(0,0,0);zoom=0.8;cameraHold.release();selectedSpell=null;aimScreen=null;
+  focus.set(0,0,0);zoom=0.8;cameraHold.release();edgeCamera.clear();selectedSpell=null;aimScreen=null;
   aim.copy(hero.position).add(new THREE.Vector3(0,0,15));message('연습 초기화');cameraDirty=true;updateCamera();
 }
 document.querySelector('#reset').addEventListener('click',reset);
@@ -319,8 +323,8 @@ window.addEventListener('keydown',event=>{
 
 });
 window.addEventListener('keyup',event=>{if(event.code==='Space'){event.preventDefault();cameraHold.release();}});
-window.addEventListener('blur',()=>cameraHold.release());
-document.addEventListener('visibilitychange',()=>{if(document.hidden)cameraHold.release();});
+window.addEventListener('blur',()=>{cameraHold.release();edgeCamera.clear();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){cameraHold.release();edgeCamera.clear();}});
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();cameraDirty=true;updateCamera();}
 window.addEventListener('resize',resize);resize();
 canvas.addEventListener('webglcontextlost', event => {
@@ -353,6 +357,8 @@ function frame(){
   }
   attackSelection.visible=isAlive(attackTarget);
   if(attackSelection.visible){attackSelection.position.copy(attackTarget.position);attackSelection.position.y=0.1;}
+  if(cameraHold.update(focus,hero.position,dt)||edgeCamera.update(focus,dt,innerWidth,innerHeight,cameraHold.held,zoom))cameraDirty=true;
+  updateCamera();
   updateAim();
   if(messageLife>0){messageLife-=dt;if(messageLife<=0){spellMessage.textContent=selectedSpell?`${selectedSpell} · 바닥을 클릭해 시전`:'우클릭: 적 공격 · Shift+우클릭: 바닥 기준 자동 공격';spellMessage.style.opacity='0';}}
   for(const key of Object.keys(SPELLS)){
@@ -386,7 +392,6 @@ function frame(){
   let livingEnemies=0;for(const enemy of enemies)if(isAlive(enemy))livingEnemies++;
   const nextEnemyStats=`적 ${livingEnemies} · 처치 ${enemySystem.kills}`;
   if(nextEnemyStats!==lastEnemyStats){enemyStats.textContent=nextEnemyStats;lastEnemyStats=nextEnemyStats;}
-  if(cameraHold.update(focus,hero.position,dt))cameraDirty=true;
   updateCamera();
   renderer.render(scene,camera);
 }

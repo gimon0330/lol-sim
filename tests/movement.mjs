@@ -7,7 +7,7 @@ import {SPELLS,SpellSystem} from '../src/combat/spells.js';
 import {SpellEffects} from '../src/combat/spell-effects.js';
 import {AttackSystem,BASIC_ATTACK,isAlive} from '../src/combat/attacks.js';
 import {EnemySystem as RealEnemySystem} from '../src/enemies/enemies.js';
-import {HoldCamera,smoothAngle} from '../src/motion.js';
+import {HoldCamera,EdgeCamera,smoothAngle} from '../src/motion.js';
 class EnemySystem extends RealEnemySystem {constructor(scene,hero){super(scene,hero,{random:()=>0.5});}}
 const root=new URL('../',import.meta.url);
 const character=createEzreal();
@@ -33,7 +33,7 @@ const keys={};globalThis.window={addEventListener(k,fn){keys[k]=fn}};
 globalThis.innerWidth=1280;globalThis.innerHeight=800;globalThis.devicePixelRatio=1;
 let frame;globalThis.requestAnimationFrame=fn=>{frame=fn};
 let game=fs.readFileSync(new URL('src/game.js',root),'utf8').replace(/^import .*;\n/gm,'');
-new Function('THREE','createEzreal','SPELLS','SpellSystem','SpellEffects','AttackSystem','BASIC_ATTACK','isAlive','EnemySystem','HoldCamera','smoothAngle',game)(THREE,createEzreal,SPELLS,SpellSystem,SpellEffects,AttackSystem,BASIC_ATTACK,isAlive,EnemySystem,HoldCamera,smoothAngle);
+new Function('THREE','createEzreal','SPELLS','SpellSystem','SpellEffects','AttackSystem','BASIC_ATTACK','isAlive','EnemySystem','HoldCamera','EdgeCamera','smoothAngle',game)(THREE,createEzreal,SPELLS,SpellSystem,SpellEffects,AttackSystem,BASIC_ATTACK,isAlive,EnemySystem,HoldCamera,EdgeCamera,smoothAngle);
 const tick=(n=1)=>{for(let i=0;i<n;i++)frame()};
 const click=(button,x,y,shiftKey=false)=>elements['#world'].listeners.pointerdown({button,clientX:x,clientY:y,shiftKey,preventDefault(){}});
 const key=code=>keys.keydown({code,preventDefault(){}});
